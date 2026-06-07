@@ -24,17 +24,36 @@ app.get("/", async (req, res) => {
     }
 });
 
+app.post('/update-token', async (req, res) => {
+    const { token, userId } = req.body;
+    if (!token || !userId) {
+        return res.status(400).json({
+            success: false,
+            error: "Missing required fields: token or userId."
+        });
+    }
+    try {
+        const db = admin.firestore();
+        await db.collection('users').doc(userId).update({ fcmToken: token });
+        res.json({
+            success: true,
+            message: "Token updated successfully."
+        });
+    } catch (error) {
+        console.error("Error updating token:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.post('/send-job-notification', async (req, res) => {
     try {
         const { token, title, body, jobId } = req.body;
-
         if (!token || !title || !body) {
             return res.status(400).json({
                 success: false,
                 error: "Missing required fields: token, title, or body."
             });
         }
-
         const message = {
             notification: {
                 title: title,
@@ -46,18 +65,14 @@ app.post('/send-job-notification', async (req, res) => {
             },
             token: token
         };
-
         console.log("Sending FCM payload:", message);
-
         const response = await admin.messaging().send(message);
-        
         console.log("Successfully sent message:", response);
         res.json({
             success: true,
             message: "Notification sent successfully",
             messageId: response
         });
-
     } catch (error) {
         console.error("FCM Error:", error);
         res.status(500).json({
