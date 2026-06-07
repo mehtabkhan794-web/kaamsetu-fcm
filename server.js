@@ -14,15 +14,45 @@ try {
     console.error("X Firebase Init Error:", error);
 }
 
-// डेटाबेस लिसनर - 'job_notifications' कलेक्शन में नए डेटा को सुनता है
+// 🔥 ऑटोमैटिक लिसनर: Firestore में नया जॉब आते ही नोटिफिकेशन भेजेगा
 try {
     const db = admin.firestore();
     db.collection('job_notifications').onSnapshot(snapshot => {
-        snapshot.docChanges().forEach(change => {
+        snapshot.docChanges().forEach(async (change) => {
             if (change.type === 'added') {
                 const data = change.doc.data();
-                console.log("New job notification added:", data);
-                // यहाँ आप चाहें तो FCM भेज सकते हैं, या जो भी एक्शन लेना हो वह ले सकते हैं।
+                console.log("New job notification detected in Firestore:", data);
+
+                // डेटा से जरूरी चीजें निकालना (आपकी ऐप के फील्ड्स के नाम के हिसाब से)
+                const topicName = data.topic || data.topicName; 
+                const notificationTitle = data.title || "नया काम उपलब्ध है!";
+                const notificationBody = data.body || "ऐप खोलकर पूरी जानकारी देखें।";
+                const jobId = data.jobId || "";
+
+                // अगर टॉपिक मिल जाता है, तो तुरंत FCM नोटिफिकेशन ट्रिगर करो
+                if (topicName) {
+                    const message = {
+                        notification: {
+                            title: notificationTitle,
+                            body: notificationBody
+                        },
+                        data: {
+                            jobId: jobId.toString(),
+                            click_action: "FLUTTER_NOTIFICATION_CLICK"
+                        },
+                        topic: topicName // यहाँ टोकन की जगह टॉपिक का इस्तेमाल हो रहा है
+                    };
+
+                    try {
+                        console.log(`Sending FCM to topic [${topicName}]...`);
+                        const response = await admin.messaging().send(message);
+                        console.log(`Successfully sent message to topic [${topicName}]:`, response);
+                    } catch (fcmError) {
+                        console.error(`FCM Error for topic [${topicName}]:`, fcmError.message);
+                    }
+                } else {
+                    console.log("⚠️ Notification skipped: No topic found in this document.");
+                }
             }
         });
     });
