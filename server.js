@@ -14,6 +14,23 @@ try {
     console.error("X Firebase Init Error:", error);
 }
 
+// डेटाबेस लिसनर - 'job_notifications' कलेक्शन में नए डेटा को सुनता है
+try {
+    const db = admin.firestore();
+    db.collection('job_notifications').onSnapshot(snapshot => {
+        snapshot.docChanges().forEach(change => {
+            if (change.type === 'added') {
+                const data = change.doc.data();
+                console.log("New job notification added:", data);
+                // यहाँ आप चाहें तो FCM भेज सकते हैं, या जो भी एक्शन लेना हो वह ले सकते हैं।
+            }
+        });
+    });
+    console.log("Firestore listener attached to 'job_notifications'");
+} catch (error) {
+    console.error("Error attaching Firestore listener:", error);
+}
+
 app.get("/", async (req, res) => {
     try {
         const db = admin.firestore();
@@ -82,7 +99,7 @@ app.post('/send-job-notification', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
