@@ -67,12 +67,77 @@ function startFirestoreListener() {
     });
 }
 
-// लिसनर को चालू करें
+// 🔥 3. ऑटोमैटिक लिसनर (Worker Interest): जब कोई वर्कर Interest बटन दबाए
+function startInterestListener() {
+    db.collection('job_interests').onSnapshot(async (snapshot) => {
+        const changes = snapshot.docChanges();
+
+        for (const change of changes) {
+            if (change.type === 'added') {
+                const interestData = change.doc.data();
+                console.log(`💼 New Interest detected [ID: ${change.doc.id}]`);
+
+                const ownerId = interestData.ownerId;
+                const workerName = interestData.workerName || "एक वर्कर";
+                const jobTitle = interestData.jobTitle || "आपकी पोस्ट";
+                const jobId = interestData.jobId ? interestData.jobId.toString() : "";
+
+                if (ownerId) {
+                    try {
+                        // मलिक (Owner) का डेटा 'users' कलेक्शन से निकालें
+                        const userDoc = await db.collection('users').doc(ownerId).get();
+                        
+                        if (!userDoc.exists) {
+                            console.log(`⚠️ Owner with ID [${ownerId}] not found in users collection.`);
+                            continue;
+                        }
+
+                        const fcmToken = userDoc.data().fcmToken;
+
+                        if (fcmToken) {
+                            const message = {
+                                notification: {
+                                    title: "नया इंटरेस्ट मिला! 💼",
+                                    body: `${workerName} ने आपकी जॉब "${jobTitle}" में इंटरेस्ट दिखाया है।`
+                                },
+                                data: {
+                                    jobId: jobId,
+                                    type: "interest_received",
+                                    click_action: "FLUTTER_NOTIFICATION_CLICK"
+                                },
+                                token: fcmToken,
+                                android: {
+                                    priority: "high" // तुरंत डिलीवरी के लिए
+                                }
+                            };
+
+                            console.log(`📡 Sending Interest FCM to Owner [ID: ${ownerId}]...`);
+                            const response = await admin.messaging().send(message);
+                            console.log(`✅ Successfully sent interest notification to Owner:`, response);
+                        } else {
+                            console.log(`⚠️ FCM Token not found for Owner [ID: ${ownerId}].`);
+                        }
+                    } catch (error) {
+                        console.error(`❌ Error processing interest notification for Owner [${ownerId}]:`, error.message);
+                    }
+                } else {
+                    console.log(`⚠️ Interest skipped for doc [${change.doc.id}]: No ownerId found.`);
+                }
+            }
+        }
+    }, (error) => {
+        console.error("❌ Interest Listener Crashed, Restarting in 5s...", error.message);
+        setTimeout(startInterestListener, 5000);
+    });
+}
+
+// दोनों लिस्टनर्स को चालू करें
 startFirestoreListener();
-console.log("📡 Firestore listener attached to 'job_notifications'");
+startInterestListener();
+console.log("📡 Firestore listeners attached to 'job_notifications' and 'job_interests'");
 
 
-// 3. API Endpoints (UptimeRobot इसी एंडपॉइंट को चेक करेगा)
+// 4. API Endpoints (UptimeRobot इसी एंडपॉइंट को चेक करेगा)
 app.get("/", async (req, res) => {
     try {
         // यह चेक करने के लिए कि फायरबेस सच में कनेक्टेड है या नहीं
