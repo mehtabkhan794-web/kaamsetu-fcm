@@ -82,10 +82,12 @@ function startInterestListener() {
 
                     // स्क्रीनशॉट स्ट्रक्चर के हिसाब से सही वेरिएबल्स निकालना
                     const ownerId = docData.toId; 
-                    const notificationTitle = docData.notification ? docData.notification.title : "नया इंटरेस्ट मिला! 💼";
-                    const notificationBody = docData.notification ? docData.notification.body : "एक वर्कर ने आपकी जॉब में इंटरेस्ट दिखाया है।";
                     const jobId = docData.data ? (docData.data.jobId ? docData.data.jobId.toString() : "") : "";
-                    const channelId = docData.notification ? (docData.notification.android_channel_id || "kaamsetu_job_alerts_v2") : "kaamsetu_job_alerts_v2";
+                    
+                    // अगर डॉक्यूमेंट में body है (जैसे: "Mehtab Khan is interested") तो वो उठाएगा, नहीं तो डिफ़ॉल्ट टेक्स्ट
+                    const notificationBody = docData.notification && docData.notification.body 
+                        ? docData.notification.body 
+                        : "एक वर्कर ने आपकी जॉब में इंटरेस्ट दिखाया है।";
 
                     if (ownerId) {
                         try {
@@ -102,7 +104,8 @@ function startInterestListener() {
                             if (fcmToken) {
                                 const message = {
                                     notification: {
-                                        title: notificationTitle,
+                                        // 🌟 मलीक के लिए टाइटल यहाँ पर हमेशा फिक्स रहेगा
+                                        title: "New Worker Interested! 💼",
                                         body: notificationBody
                                     },
                                     data: {
@@ -114,7 +117,9 @@ function startInterestListener() {
                                     android: {
                                         priority: "high", // तुरंत डिलीवरी के लिए
                                         notification: {
-                                            channelId: channelId
+                                            // 🌟 मलीक के लिए डिफ़ॉल्ट चैनल और डिफ़ॉल्ट टोन सेट कर दी है
+                                            channelId: "kaamsetu_general_alerts",
+                                            sound: "default"
                                         }
                                     }
                                 };
