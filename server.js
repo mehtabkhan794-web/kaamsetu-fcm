@@ -4,32 +4,37 @@ const admin = require('firebase-admin');
 const app = express();
 app.use(express.json());
 
+// 1. Firebase Admin Initialize (सुरक्षित तरीके से)
 try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
     admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
     });
-    console.log("Firebase Admin Initialized");
+    console.log("🚀 Firebase Admin Initialized Successfully");
 } catch (error) {
-    console.error("X Firebase Init Error:", error);
+    console.error("❌ Firebase Init Error:", error.message);
+    // प्रोडक्शन पर अगर फायरबेस इनिशियलाइज नहीं हुआ, तो सर्वर को बंद करना ही सही है ताकि रीस्टार्ट हो सके
+    process.exit(1); 
 }
 
-// 🔥 ऑटोमैटिक लिसनर: Firestore में नया जॉब आते ही नोटिफिकेशन भेजेगा
-try {
-    const db = admin.firestore();
-    db.collection('job_notifications').onSnapshot(snapshot => {
-        snapshot.docChanges().forEach(async (change) => {
+const db = admin.firestore();
+
+// 2. 🔥 ऑटोमैटिक लिसनर: async/await को संभालने के लिए for...of लूप का इस्तेमाल
+function startFirestoreListener() {
+    db.collection('job_notifications').onSnapshot(async (snapshot) => {
+        const changes = snapshot.docChanges();
+        
+        // .forEach की जगह for...of ताकि async/await लाइन बाय लाइन सही से काम करे
+        for (const change of changes) {
             if (change.type === 'added') {
                 const data = change.doc.data();
-                console.log("New job notification detected in Firestore:", data);
+                console.log(`🆕 New job notification detected [ID: ${change.doc.id}]`);
 
-                // डेटा से जरूरी चीजें निकालना (आपकी ऐप के फील्ड्स के नाम के हिसाब से)
                 const topicName = data.topic || data.topicName; 
                 const notificationTitle = data.title || "नया काम उपलब्ध है!";
                 const notificationBody = data.body || "ऐप खोलकर पूरी जानकारी देखें।";
-                const jobId = data.jobId || "";
+                const jobId = data.jobId ? data.jobId.toString() : "";
 
-                // अगर टॉपिक मिल जाता है, तो तुरंत FCM नोटिफिकेशन ट्रिगर करो
                 if (topicName) {
                     const message = {
                         notification: {
@@ -37,37 +42,45 @@ try {
                             body: notificationBody
                         },
                         data: {
-                            jobId: jobId.toString(),
+                            jobId: jobId,
                             click_action: "FLUTTER_NOTIFICATION_CLICK"
                         },
-                        topic: topicName // यहाँ टोकन की जगह टॉपिक का इस्तेमाल हो रहा है
+                        topic: topicName
                     };
 
                     try {
-                        console.log(`Sending FCM to topic [${topicName}]...`);
+                        console.log(`📡 Sending FCM to topic [${topicName}]...`);
                         const response = await admin.messaging().send(message);
-                        console.log(`Successfully sent message to topic [${topicName}]:`, response);
+                        console.log(`✅ Successfully sent message to topic [${topicName}]:`, response);
                     } catch (fcmError) {
-                        console.error(`FCM Error for topic [${topicName}]:`, fcmError.message);
+                        console.error(`❌ FCM Error for topic [${topicName}]:`, fcmError.message);
                     }
                 } else {
-                    console.log("⚠️ Notification skipped: No topic found in this document.");
+                    console.log(`⚠️ Notification skipped for doc [${change.doc.id}]: No topic found.`);
                 }
             }
-        });
+        }
+    }, (error) => {
+        console.error("❌ Firestore Listener Crashed, Restarting in 5s...", error.message);
+        // अगर नेटवर्क टूटने से लिसनर क्रैश होता है, तो 5 सेकंड बाद दोबारा शुरू करें
+        setTimeout(startFirestoreListener, 5000);
     });
-    console.log("Firestore listener attached to 'job_notifications'");
-} catch (error) {
-    console.error("Error attaching Firestore listener:", error);
 }
 
+// लिसनर को चालू करें
+startFirestoreListener();
+console.log("📡 Firestore listener attached to 'job_notifications'");
+
+
+// 3. API Endpoints (UptimeRobot इसी एंडपॉइंट को चेक करेगा)
 app.get("/", async (req, res) => {
     try {
-        const db = admin.firestore();
+        // यह चेक करने के लिए कि फायरबेस सच में कनेक्टेड है या नहीं
         const test = await db.collection("job_notifications").limit(1).get();
         res.send(`KaamSetu FCM Server Running | Firebase Connected | Docs: ${test.size}`);
     } catch (error) {
-        res.status(500).send(error.message);
+        console.error("❌ Root Endpoint Error:", error.message);
+        res.status(500).send(`Server Error: ${error.message}`);
     }
 });
 
@@ -80,14 +93,14 @@ app.post('/update-token', async (req, res) => {
         });
     }
     try {
-        const db = admin.firestore();
-        await db.collection('users').doc(userId).update({ fcmToken: token });
+        // .update() की जगह .set with merge: true ताकि अगर यूजर डॉक न भी हो, तो एरर न आए
+        await db.collection('users').doc(userId).set({ fcmToken: token }, { merge: true });
         res.json({
             success: true,
             message: "Token updated successfully."
         });
     } catch (error) {
-        console.error("Error updating token:", error);
+        console.error("❌ Error updating token:", error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -101,35 +114,30 @@ app.post('/send-job-notification', async (req, res) => {
                 error: "Missing required fields: token, title, or body."
             });
         }
+        
         const message = {
-            notification: {
-                title: title,
-                body: body
-            },
+            notification: { title, body },
             data: {
-                jobId: jobId || "",
+                jobId: jobId ? jobId.toString() : "",
                 click_action: "FLUTTER_NOTIFICATION_CLICK"
             },
             token: token
         };
-        console.log("Sending FCM payload:", message);
+
+        console.log("Sending Individual FCM...");
         const response = await admin.messaging().send(message);
-        console.log("Successfully sent message:", response);
         res.json({
             success: true,
             message: "Notification sent successfully",
             messageId: response
         });
     } catch (error) {
-        console.error("FCM Error:", error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
+        console.error("❌ Single FCM Error:", error.message);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
 });
