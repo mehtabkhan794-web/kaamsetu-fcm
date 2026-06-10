@@ -67,61 +67,70 @@ function startFirestoreListener() {
     });
 }
 
-// 🔥 3. ऑटोमैटिक लिसनर (Worker Interest): जब कोई वर्कर Interest बटन दबाए
+// 🔥 3. ऑटोमैटिक लिसनर (Worker Interest): user_notifications कलेक्शन के लिए
 function startInterestListener() {
-    db.collection('job_interests').onSnapshot(async (snapshot) => {
+    db.collection('user_notifications').onSnapshot(async (snapshot) => {
         const changes = snapshot.docChanges();
 
         for (const change of changes) {
             if (change.type === 'added') {
-                const interestData = change.doc.data();
-                console.log(`💼 New Interest detected [ID: ${change.doc.id}]`);
+                const docData = change.doc.data();
+                
+                // सिर्फ 'INTEREST' टाइप वाले डॉक्यूमेंट्स को ही प्रोसेस करेंगे
+                if (docData.data && docData.data.type === 'INTEREST') {
+                    console.log(`💼 New Interest detected [ID: ${change.doc.id}]`);
 
-                const ownerId = interestData.ownerId;
-                const workerName = interestData.workerName || "एक वर्कर";
-                const jobTitle = interestData.jobTitle || "आपकी पोस्ट";
-                const jobId = interestData.jobId ? interestData.jobId.toString() : "";
+                    // स्क्रीनशॉट स्ट्रक्चर के हिसाब से सही वेरिएबल्स निकालना
+                    const ownerId = docData.toId; 
+                    const notificationTitle = docData.notification ? docData.notification.title : "नया इंटरेस्ट मिला! 💼";
+                    const notificationBody = docData.notification ? docData.notification.body : "एक वर्कर ने आपकी जॉब में इंटरेस्ट दिखाया है।";
+                    const jobId = docData.data ? (docData.data.jobId ? docData.data.jobId.toString() : "") : "";
+                    const channelId = docData.notification ? (docData.notification.android_channel_id || "kaamsetu_job_alerts_v2") : "kaamsetu_job_alerts_v2";
 
-                if (ownerId) {
-                    try {
-                        // मलिक (Owner) का डेटा 'users' कलेक्शन से निकालें
-                        const userDoc = await db.collection('users').doc(ownerId).get();
-                        
-                        if (!userDoc.exists) {
-                            console.log(`⚠️ Owner with ID [${ownerId}] not found in users collection.`);
-                            continue;
+                    if (ownerId) {
+                        try {
+                            // मलिक (Owner) का डेटा 'users' कलेक्शन से निकालें
+                            const userDoc = await db.collection('users').doc(ownerId).get();
+                            
+                            if (!userDoc.exists) {
+                                console.log(`⚠️ Owner with ID [${ownerId}] not found in users collection.`);
+                                continue;
+                            }
+
+                            const fcmToken = userDoc.data().fcmToken;
+
+                            if (fcmToken) {
+                                const message = {
+                                    notification: {
+                                        title: notificationTitle,
+                                        body: notificationBody
+                                    },
+                                    data: {
+                                        jobId: jobId,
+                                        type: "interest_received",
+                                        click_action: "FLUTTER_NOTIFICATION_CLICK"
+                                    },
+                                    token: fcmToken,
+                                    android: {
+                                        priority: "high", // तुरंत डिलीवरी के लिए
+                                        notification: {
+                                            channelId: channelId
+                                        }
+                                    }
+                                };
+
+                                console.log(`📡 Sending Interest FCM to Owner [ID: ${ownerId}]...`);
+                                const response = await admin.messaging().send(message);
+                                console.log(`✅ Successfully sent interest notification to Owner:`, response);
+                            } else {
+                                console.log(`⚠️ FCM Token not found for Owner [ID: ${ownerId}].`);
+                            }
+                        } catch (error) {
+                            console.error(`❌ Error processing interest notification for Owner [${ownerId}]:`, error.message);
                         }
-
-                        const fcmToken = userDoc.data().fcmToken;
-
-                        if (fcmToken) {
-                            const message = {
-                                notification: {
-                                    title: "नया इंटरेस्ट मिला! 💼",
-                                    body: `${workerName} ने आपकी जॉब "${jobTitle}" में इंटरेस्ट दिखाया है।`
-                                },
-                                data: {
-                                    jobId: jobId,
-                                    type: "interest_received",
-                                    click_action: "FLUTTER_NOTIFICATION_CLICK"
-                                },
-                                token: fcmToken,
-                                android: {
-                                    priority: "high" // तुरंत डिलीवरी के लिए
-                                }
-                            };
-
-                            console.log(`📡 Sending Interest FCM to Owner [ID: ${ownerId}]...`);
-                            const response = await admin.messaging().send(message);
-                            console.log(`✅ Successfully sent interest notification to Owner:`, response);
-                        } else {
-                            console.log(`⚠️ FCM Token not found for Owner [ID: ${ownerId}].`);
-                        }
-                    } catch (error) {
-                        console.error(`❌ Error processing interest notification for Owner [${ownerId}]:`, error.message);
+                    } else {
+                        console.log(`⚠️ Interest skipped for doc [${change.doc.id}]: No toId (ownerId) found.`);
                     }
-                } else {
-                    console.log(`⚠️ Interest skipped for doc [${change.doc.id}]: No ownerId found.`);
                 }
             }
         }
@@ -134,7 +143,7 @@ function startInterestListener() {
 // दोनों लिस्टनर्स को चालू करें
 startFirestoreListener();
 startInterestListener();
-console.log("📡 Firestore listeners attached to 'job_notifications' and 'job_interests'");
+console.log("📡 Firestore listeners attached to 'job_notifications' and 'user_notifications'");
 
 
 // 4. API Endpoints (UptimeRobot इसी एंडपॉइंट को चेक करेगा)
